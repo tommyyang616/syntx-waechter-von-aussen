@@ -1,0 +1,62 @@
+# Wächter von außen (Leitstand C5, 18.11.2026)
+#
+# Fragt alle 30 Minuten von außerhalb Vercels die Puls-Adresse des Master Dashboards ab. Sie antwortet 200, wenn jeder
+# Zeitplan bei Vercel rechtzeitig gelaufen ist, sonst 503 mit Grund. Antwortet sie gar nicht, ist Vercel selbst weg.
+# Rot → dieser Lauf schlägt fehl (GitHub schickt eine Mail) und, falls hinterlegt, eine Telegram-Nachricht — nur beim
+# Wechsel von grün auf rot und zurück, nicht alle 30 Minuten.
+#
+# Öffentliches Repo mit Absicht: Standard-Runner sind hier laut GitHub-Doku gratis und zählen nicht zum Kontingent
+# (gelesen 18.11.2026). Kein Geheimnis im Code — Schlüssel nur als Repo-Geheimnisse.
+name: Wächter von außen
+
+on:
+  schedule:
+    - cron: '7,37 * * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+
+concurrency:
+  group: puls
+  cancel-in-progress: false
+
+jobs:
+  puls:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Puls abfragen (3 Versuche, 30 s Abstand)
+        env:
+          PULS_ADRESSE: https://antigravity-master.vercel.app/api/puls
+          PULS_SCHLUESSEL: ${{ secrets.PULS_SCHLUESSEL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          melde() {
+            if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
+              curl -sS -o /dev/null -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+                --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text=$1" || true
+            fi
+          }
+          vorher=$(gh run list -R "$GITHUB_REPOSITORY" --workflow puls.yml --status completed --limit 1 \
+            --json conclusion -q '.[0].conclusion' 2>/dev/null || echo unbekannt)
+          kopf=()
+          if [ -n "$PULS_SCHLUESSEL" ]; then kopf=(-H "Authorization: Bearer ${PULS_SCHLUESSEL}"); fi
+          code=000
+          for versuch in 1 2 3; do
+            code=$(curl -sS -o antwort.json -w '%{http_code}' --max-time 30 "${kopf[@]}" "$PULS_ADRESSE" || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "Puls grün:"; cat antwort.json; echo
+              if [ "$vorher" = "failure" ]; then melde "✅ Wächter von außen: Master Dashboard und Zeitpläne laufen wieder."; fi
+              exit 0
+            fi
+            echo "Versuch $versuch: Antwort $code"
+            if [ "$versuch" != "3" ]; then sleep 30; fi
+          done
+          grund=$(jq -r '.grund // empty' antwort.json 2>/dev/null || true)
+          text="🛰️ Wächter von außen: Master Dashboard antwortet mit ${code} — ${grund:-keine Antwort, Vercel prüfen}. Link: https://antigravity-master.vercel.app/team"
+          echo "::error::$text"
+          if [ "$vorher" != "failure" ]; then melde "$text"; fi
+          exit 1
