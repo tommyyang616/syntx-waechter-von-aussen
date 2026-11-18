@@ -67,7 +67,12 @@ jobs:
             if [ "$versuch" != "3" ]; then sleep 30; fi
           done
           grund=$(jq -r '.grund // empty' antwort.json 2>/dev/null || true)
-          text="🛰️ Wächter von außen: Master Dashboard antwortet mit ${code} — ${grund:-keine Antwort, Vercel prüfen}. Link: https://antigravity-master.vercel.app/team"
+          if [ "$code" = "000" ]; then
+            text="🛰️ Wächter von außen: Master Dashboard antwortet nicht — Vercel prüfen."
+          else
+            text="🛰️ Wächter von außen: Master Dashboard antwortet mit ${code} — ${grund:-unerwartete Antwort}."
+          fi
+          text="${text} Link: https://antigravity-master.vercel.app/team"
           echo "::error::$text"
           if [ "$vorher" != "failure" ]; then melde "$text"; fi
           exit 1
