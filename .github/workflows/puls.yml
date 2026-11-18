@@ -46,7 +46,8 @@ jobs:
           if [ -n "$PULS_SCHLUESSEL" ]; then kopf=(-H "Authorization: Bearer ${PULS_SCHLUESSEL}"); fi
           code=000
           for versuch in 1 2 3; do
-            code=$(curl -sS -o antwort.json -w '%{http_code}' --max-time 30 "${kopf[@]}" "$PULS_ADRESSE" || echo 000)
+            code=$(curl -sS -o antwort.json -w '%{http_code}' --max-time 30 "${kopf[@]}" "$PULS_ADRESSE") || true
+            code=${code:-000}
             if [ "$code" = "200" ]; then
               echo "Puls grün:"; cat antwort.json; echo
               if [ "$vorher" = "failure" ]; then melde "✅ Wächter von außen: Master Dashboard und Zeitpläne laufen wieder."; fi
